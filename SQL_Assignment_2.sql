@@ -9,35 +9,40 @@ To generate this report, you are required to use the appropriate SQL Server Buil
 
 */
 
-SELECT * FROM product.product
-WHERE product_name = '2TB Red 5400 rpm SATA III 3.5 Internal NAS HDD'
-
-SELECT * FROM product.product
-WHERE product_name = 'Polk Audio - 50 W Woofer - Black'
-
-SELECT O.customer_id, first_name, last_name, product_name
-FROM sale.orders O, sale.customer C, sale.order_item OI, product.product P
-WHERE O.customer_id = C.customer_id 
-AND O.order_id = OI.order_id
-AND OI.product_id = P.product_id
-AND product_name = '2TB Red 5400 rpm SATA III 3.5 Internal NAS HDD'
-
-SELECT O.customer_id, first_name, last_name, P.product_name,
-    CASE P.product_name
-        WHEN 'Polk Audio - 50 W Woofer - Black' THEN 'Yes'
-        ELSE 'No' 
-    END Other_Product
-FROM sale.orders O, sale.customer C, sale.order_item OI, product.product P
-WHERE O.customer_id = C.customer_id 
-AND O.order_id = OI.order_id
-AND OI.product_id = P.product_id
-AND product_name = '2TB Red 5400 rpm SATA III 3.5 Internal NAS HDD'
 
 
+SELECT Cu.customer_id, Cu.first_name, Cu.last_name,
+    CASE 
+        WHEN EXISTS (
+            SELECT 1
+            FROM sale.orders AS Ord
+            INNER JOIN sale.order_item AS It 
+                ON It.order_id = Ord.order_id
+            INNER JOIN product.product AS Prod 
+                ON Prod.product_id = It.product_id
+            WHERE Ord.customer_id = Cu.customer_id
+            AND Prod.product_name = 'Polk Audio - 50 W Woofer - Black'
+        )
+        THEN 'Yes'
+        ELSE 'No'
+    END AS Other_Product
+FROM sale.customer AS Cu
+INNER JOIN sale.orders AS O 
+    ON O.customer_id = Cu.customer_id
+INNER JOIN sale.order_item AS I 
+    ON I.order_id = O.order_id 
+WHERE I.product_id = (
+    SELECT product_id
+    FROM product.product
+    WHERE product_name = '2TB Red 5400 rpm SATA III 3.5 Internal NAS HDD'
+)
+ORDER BY Cu.customer_id;
 
 /*
 2. Conversion Rate
-Below you see a table of the actions of customers visiting the website by clicking on two different types of advertisements given by an E-Commerce company. Write a query to return the conversion rate for each Advertisement type.
+Below you see a table of the actions of customers visiting the website by clicking on two different types 
+of advertisements given by an E-Commerce company. Write a query to return the conversion rate for each 
+Advertisement type.
 
 Actions:
 
@@ -47,71 +52,6 @@ Adv_Type
 
 Action
 
-1
-
-A
-
-Left
-
-2
-
-A
-
-Order
-
-3
-
-B
-
-Left
-
-4
-
-A
-
-Order
-
-5
-
-A
-
-Review
-
-6
-
-A
-
-Left
-
-7
-
-B
-
-Left
-
-8
-
-B
-
-Order
-
-9
-
-B
-
-Review
-
-10
-
-A
-
-Review
-
-Sample Output:
-
-Adv_Type
-
-Conversion_Rate
 
 A
 
@@ -148,7 +88,6 @@ INSERT INTO Actions (Visitor_ID, Adv_Type, Action) VALUES
 (9, 'B', 'Review'),
 (10, 'A', 'Review');
 
-
 SELECT
     Adv_Type,
     COUNT(*) AS Total_Actions,
@@ -159,10 +98,9 @@ GROUP BY
     Adv_Type;
 
 
-
 SELECT
     Adv_Type,
-    CAST(SUM(CASE WHEN Action = 'Order' THEN 1 ELSE 0 END) AS FLOAT) * 1.0 / COUNT(*) AS Conversion_Rate
+    CAST(ROUND(COUNT(CASE WHEN Action = 'Order' THEN 1 END)*1.0 / COUNT(Action), 2) AS DECIMAL(10,2)) AS Conversion_Rate
 FROM
     Actions
 GROUP BY
