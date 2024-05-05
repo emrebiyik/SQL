@@ -1,0 +1,91 @@
+
+
+CREATE DATABASE ECommerce;
+
+select * from ECommerce;
+
+-- Analyze the data by finding the answers to the questions below:
+
+-- 1. Find the top 3 customers who have the maximum count of orders.
+
+SELECT TOP 3 Cust_ID, COUNT(*) AS order_count
+FROM ECommerce 
+GROUP BY Cust_ID
+ORDER BY order_count DESC;
+
+-- 2. Find the customer whose order took the maximum time to get shipping.
+
+SELECT TOP 1 Cust_ID, Customer_Name, DATEDIFF(DAY, Order_Date, Ship_Date) Date_Diff 
+FROM ECommerce
+ORDER BY Date_Diff DESC
+
+-- 3. Count the total number of unique customers in January and how many of them came back 
+-- again in the each one months of 2011.
+
+WITH RECURSIVE MonthlyCustomers AS (
+    -- Başlangıç: Ocak ayındaki benzersiz müşteri sayısı
+    (SELECT MONTH(Order_Date) AS month,
+            COUNT(DISTINCT Cust_ID) AS unique_customers
+    FROM ECommerce
+    WHERE MONTH(Order_Date) = 1 AND YEAR(Order_Date) = 2011
+    GROUP BY MONTH(Order_Date))
+    
+    UNION ALL
+    
+    -- Recursive adım: Her bir ay için benzersiz müşteri sayısı ve bir önceki aydaki geri dönen müşteri sayısı
+    (SELECT o.month + 1 AS month,
+            COUNT(DISTINCT o.customer_id) AS unique_customers,
+            COUNT(DISTINCT CASE WHEN o.month + 1 = 2 AND m.month = 1 THEN o.customer_id END) AS returned_customers
+    FROM ECommerce o
+    JOIN MonthlyCustomers m ON o.month = m.month + 1
+    WHERE YEAR(o.order_date) = 2011
+    GROUP BY o.month)
+)
+
+-- Sonuçları al
+SELECT * FROM MonthlyCustomers;
+
+-- 4. Write a query to return for each user the time elapsed between the first purchasing and the third purchasing, 
+-- in ascending order by Customer ID.
+
+WITH RankedOrders AS (
+    SELECT 
+        customer_id,
+        order_date,
+        ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_date) AS order_rank
+    FROM orders
+)
+
+SELECT 
+    ro1.customer_id,
+    DATEDIFF(DAY, ro1.order_date, ro3.order_date) AS days_between_first_and_third_purchase
+FROM 
+    RankedOrders ro1
+    INNER JOIN RankedOrders ro3 ON ro1.customer_id = ro3.customer_id
+WHERE 
+    ro1.order_rank = 1
+    AND ro3.order_rank = 3
+ORDER BY 
+    ro1.customer_id;
+
+
+-- 5. Write a query that returns customers who purchased both product 11 and product 14, as well as 
+-- the ratio of these products to the total number of products purchased by the customer.
+
+SELECT 
+    customer_id,
+    SUM(CASE WHEN product_id = 11 THEN 1 ELSE 0 END) AS product_11_count,
+    SUM(CASE WHEN product_id = 14 THEN 1 ELSE 0 END) AS product_14_count,
+    COUNT(*) AS total_products_purchased,
+    CASE 
+        WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN product_id IN (11, 14) THEN 1 ELSE 0 END) * 1.0) / COUNT(*)
+        ELSE 0 
+    END AS product_11_14_ratio
+FROM 
+    orders
+WHERE 
+    product_id IN (11, 14)
+GROUP BY 
+    customer_id
+HAVING 
+    COUNT(DISTINCT product_id) = 2;
