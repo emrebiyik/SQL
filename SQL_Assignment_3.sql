@@ -17,59 +17,52 @@ Product_id	Discount Effect
     4	           Neutral
 */
 
-SELECT *,
-    Product_id,
-    CASE
-        WHEN avg_orders_increase > 0 THEN 'Positive'
-        WHEN avg_orders_increase < 0 THEN 'Negative'
+SELECT * FROM sale.order_item
+ORDER BY product_id
+
+SELECT product_id, discount, sum(quantity) FROM sale.order_item
+GROUP BY product_id, discount
+ORDER BY product_id, discount
+
+---
+
+WITH T1 AS (
+            SELECT product_id, discount, 
+                SUM(quantity) AS total_order,
+                ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY discount) AS discount_row,
+                AVG(SUM(quantity)) OVER (PARTITION BY product_id ORDER BY discount
+                                    ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS avg_ord
+            FROM sale.order_item
+            GROUP BY product_id, discount
+),
+
+T2 AS (
+    SELECT *,
+        CASE WHEN avg_ord > CAST(LAG(avg_ord) OVER (PARTITION BY product_id ORDER BY discount) AS DECIMAL) THEN 1
+             WHEN avg_ord < CAST(LAG(avg_ord) OVER (PARTITION BY product_id ORDER BY discount) AS DECIMAL) THEN -1
+            ELSE 0
+        END AS discount_change
+FROM T1
+)
+
+SELECT DISTINCT product_id, 
+    CASE 
+        WHEN SUM(discount_change) OVER (PARTITION BY product_id) > 1 THEN 'Positive'
+        WHEN SUM(discount_change) OVER (PARTITION BY product_id) < 1 THEN 'Negative'
         ELSE 'Neutral'
     END AS Discount_Effect
-FROM
-    (
-        SELECT
-            Product_id,
-            AVG(Orders) AS avg_orders,
-            AVG(Orders) - LAG(AVG(Orders), 1, 0) OVER (PARTITION BY Product_id ORDER BY Discount_Rate) AS avg_orders_increase
-        FROM
-            YourTableNameHere -- Replace YourTableNameHere with the appropriate table name
-        GROUP BY
-            Product_id, Discount_Rate
-    ) AS OrderStats
-GROUP BY
-    product_id;
+FROM T2
+
+---
 
 
 
-select * from sale.order_item
-
-SELECT
-            product_id,
-            AVG(quantity) AS avg_quantity,
-            AVG(quantity) - LAG(AVG(quantity), 1, 0) OVER (PARTITION BY product_id ORDER BY discount) AS avg_orders_increase
-        FROM
-            sale.order_item 
-        GROUP BY
-            product_id, discount
 
 
-SELECT 
-    product_id,
-    CASE
-        WHEN avg_orders_increase > 0 THEN 'Positive'
-        WHEN avg_orders_increase < 0 THEN 'Negative'
-        ELSE 'Neutral'
-    END AS discount_effect
-FROM
-    (
-     SELECT
-            product_id,
-            AVG(quantity) AS avg_quantity,
-            AVG(quantity) - LAG(AVG(quantity), 1, 0) OVER (PARTITION BY product_id ORDER BY discount) AS avg_orders_increase
-        FROM
-            sale.order_item 
-        GROUP BY
-            product_id, discount
-    ) AS OrderStats
+
+
+
+
 
 
 
