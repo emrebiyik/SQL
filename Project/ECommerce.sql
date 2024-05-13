@@ -34,6 +34,7 @@ ORDER BY order_count DESC;
 
 
 
+
 -- 2. Find the customer whose order took the maximum time to get shipping.
 
 
@@ -109,12 +110,11 @@ JOIN ReturningCustomers rc ON jc.Cust_ID = rc.Cust_ID;
 
 WITH RankedOrders AS (
     SELECT 
-        Cust_ID,
+        Distinct Cust_ID,
         order_date,
-        ROW_NUMBER() OVER (PARTITION BY Cust_ID ORDER BY order_date) AS order_rank
+        DENSE_RANK() OVER (PARTITION BY Cust_ID ORDER BY order_date) AS order_rank
     FROM ECommerce
 )
-
 SELECT 
     ro1.Cust_ID,
     DATEDIFF(DAY, ro1.order_date, ro3.order_date) AS days_between_first_and_third_purchase
@@ -127,7 +127,33 @@ WHERE
 ORDER BY 
     ro1.Cust_ID;
 
+---WITH NULL
 
+WITH ranked_purchases AS (
+    SELECT
+        Cust_ID,Ord_ID,
+        Order_Date,
+        dense_rank() OVER (PARTITION BY Cust_ID ORDER BY  Order_Date) AS purchase_rank
+    FROM
+       ECommerce
+)
+SELECT
+    Cust_ID,
+    DATEDIFF(DAY, first_purchase_date, third_purchase_date) AS time_elapsed
+FROM (
+    SELECT
+        Cust_ID,
+        MAX(CASE WHEN purchase_rank = 1 THEN Order_Date END) AS first_purchase_date,
+        MAX(CASE WHEN purchase_rank = 3 THEN Order_Date END) AS third_purchase_date
+    FROM
+        ranked_purchases
+    WHERE
+        purchase_rank IN (1, 3)
+    GROUP BY
+        Cust_ID
+) AS purchase_dates
+ORDER BY
+    Cust_ID;
 
 -- 5. Write a query that returns customers who purchased both product 11 and product 14, as well as 
 -- the ratio of these products to the total number of products purchased by the customer.
@@ -144,6 +170,8 @@ WHERE Prod_ID IN ('Prod_11', 'Prod_14')
 GROUP BY Cust_ID
 HAVING COUNT(DISTINCT Prod_ID) = 2; --17 rows
 
+
+-- Product Ratio
 
 WITH CustomerProducts AS (
     SELECT 
@@ -179,6 +207,73 @@ HAVING
     COUNT(DISTINCT e.Prod_ID) = 2;
 
 
+-- Quantity Ratio
+
+WITH CustomerProducts AS (
+    SELECT 
+        Cust_ID,
+        SUM(Order_Quantity) AS total_products_purchased
+    FROM 
+        ECommerce
+    GROUP BY 
+        Cust_ID
+)
+SELECT 
+    cp.Cust_ID,
+    cp.total_products_purchased,
+    SUM(CASE WHEN e.Prod_ID = 'Prod_11' THEN e.Order_Quantity ELSE 0 END) AS product_11_quantity,
+    SUM(CASE WHEN e.Prod_ID = 'Prod_14' THEN e.Order_Quantity ELSE 0 END) AS product_14_quantity,
+    CAST(
+        CASE 
+            WHEN cp.total_products_purchased > 0 THEN 
+                ROUND((SUM(CASE WHEN e.Prod_ID = 'Prod_11' THEN e.Order_Quantity ELSE 0 END) + 
+                       SUM(CASE WHEN e.Prod_ID = 'Prod_14' THEN e.Order_Quantity ELSE 0 END)) * 1.0 / cp.total_products_purchased, 3)
+            ELSE 0
+        END AS DECIMAL(18, 2)
+    ) AS product_11_14_ratio
+FROM 
+    CustomerProducts cp
+INNER JOIN 
+    ECommerce e ON cp.Cust_ID = e.Cust_ID
+WHERE 
+    e.Prod_ID IN ('Prod_11', 'Prod_14')
+GROUP BY 
+    cp.Cust_ID, cp.total_products_purchased
+HAVING 
+    COUNT(DISTINCT e.Prod_ID) = 2;
+
+
+-- Quantity Ratio 2
+
+WITH t1 AS(SELECT DISTINCT
+                Ord_ID,Cust_ID,Prod_ID,Order_Quantity,
+                SUM(Order_Quantity) over(PARTITION by Cust_ID) Prod_11_14_Quantity
+           FROM ECommerce
+           WHERE Cust_ID = any(SELECT DISTINCT Cust_ID
+                                FROM ECommerce
+                                WHERE Prod_ID = 'Prod_14'
+                                INTERSECT
+                                SELECT distinct Cust_ID
+                                FROM ECommerce
+                                WHERE Prod_ID = 'Prod_11')
+                AND Prod_ID IN ('Prod_11','Prod_14')
+),
+t2 AS(SELECT DISTINCT
+            Ord_ID,Cust_ID,Prod_ID,Order_Quantity,
+            SUM(Order_Quantity) OVER(PARTITION BY Cust_ID) Total_Quantity
+      FROM ECommerce
+      WHERE Cust_ID = any(SELECT DISTINCT Cust_ID
+                            FROM ECommerce
+                            WHERE Prod_ID = 'Prod_14'
+                            INTERSECT
+                            SELECT distinct Cust_ID
+                            FROM ECommerce
+                            WHERE Prod_ID = 'Prod_11'))
+SELECT DISTINCT a.Cust_ID, a.Prod_11_14_Quantity, b.Total_Quantity,
+                cast(a.Prod_11_14_Quantity*1.0/b.Total_Quantity AS NUMERIC(3,2)) Products_Ratio
+        FROM t1 a
+        JOIN t2 b  ON a.Cust_ID=b.Cust_ID
+
 
 /*
 
@@ -192,8 +287,7 @@ will guide you. If you want, you can track your own way.
 -- each log, three field is kept: Cust_id, Year, Month)
 
 
--- CREATE VIEW MonthlyVisitLogs AS
-
+--CREATE VIEW MonthlyVisitLogs AS
 SELECT 
     Cust_ID,
     YEAR(Order_Date) AS Year,
@@ -208,7 +302,6 @@ FROM
 
 
 -- CREATE VIEW MonthlyVisitCounts AS
-
 SELECT 
     Cust_ID,
     YEAR(Order_Date) AS Year,
@@ -226,8 +319,8 @@ GROUP BY
 --- 3. For each visit of customers, create the previous or next month of the visit 
 -- as a separate column.
 
--- CREATE VIEW VisitWithAdjacentMonths AS
 
+-- CREATE VIEW VisitWithAdjacentMonths AS
 WITH VisitInfo AS (
     SELECT 
         Cust_ID,
@@ -248,25 +341,35 @@ FROM
     VisitInfo;
 
 
+SELECT * from VisitWithAdjacentMonths 
+
+
 
 -- 4. Calculate the monthly time gap between two consecutive visits by each
 -- customer.
 
 
+WITH ConsecutiveVisits AS (
+    SELECT 
+        Cust_ID,
+        MIN(DATEFROMPARTS(Year, Month, 1)) AS Visit_Date,
+        LEAD(MIN(DATEFROMPARTS(Year, Month, 1))) OVER (PARTITION BY Cust_ID ORDER BY MIN(DATEFROMPARTS(Year, Month, 1))) AS Next_Visit_Date
+    FROM 
+        MonthlyVisitLogs
+    GROUP BY 
+        Cust_ID, Year, Month
+)
 SELECT 
-    V1.Cust_ID,
-    V1.Year AS Visit_Year,
-    V1.Month AS Visit_Month,
-    V2.Year AS Next_Visit_Year,
-    V2.Month AS Next_Visit_Month,
-    DATEDIFF(MONTH, DATEFROMPARTS(V1.Year, V1.Month, 1), DATEFROMPARTS(V2.Year, V2.Month, 1)) AS Monthly_Time_Gap
+    Cust_ID,
+    Visit_Date,
+    Next_Visit_Date,
+    DATEDIFF(MONTH, Visit_Date, Next_Visit_Date) AS Monthly_Time_Gap
 FROM 
-    MonthlyVisitLogs V1
-JOIN 
-    MonthlyVisitLogs V2 ON V1.Cust_ID = V2.Cust_ID
-                        AND (V1.Year < V2.Year OR (V1.Year = V2.Year AND V1.Month < V2.Month));
+    ConsecutiveVisits
+WHERE 
+    Next_Visit_Date IS NOT NULL;
 
-
+    
 
 /* 5. Categorise customers using average time gaps. Choose the most fitted
 labeling model for you.
@@ -277,42 +380,37 @@ o Labeled as regular if the customer has made a purchase every month.
 Etc. */
 
 
-WITH CustomerFirstPurchase AS (
+WITH CustomerTimeGaps AS (
     SELECT 
         Cust_ID,
-        MIN(Year * 12 + Month) AS First_Purchase_Month
-    FROM 
-        MonthlyVisitLogs
-    GROUP BY 
-        Cust_ID
-),
-CustomerTimeGaps AS (
-    SELECT 
-        v.Cust_ID,
-        AVG(DATEDIFF(MONTH, 
-                     DATEFROMPARTS(v.Year, v.Month, 1), 
-                     DATEFROMPARTS(v_next.Year, v_next.Month, 1)
-                    )) AS Avg_Time_Gap
-    FROM 
-        MonthlyVisitLogs v
-    JOIN 
-        MonthlyVisitLogs v_next ON v.Cust_ID = v_next.Cust_ID
-                                AND v_next.Year * 12 + v_next.Month > v.Year * 12 + v.Month
-    GROUP BY 
-        v.Cust_ID
+        Visit_Date,
+        Next_Visit_Date,
+        DATEDIFF(MONTH, Visit_Date, Next_Visit_Date) AS Monthly_Time_Gap
+    FROM (
+        SELECT 
+            Cust_ID,
+            MIN(DATEFROMPARTS(Year, Month, 1)) AS Visit_Date,
+            LEAD(MIN(DATEFROMPARTS(Year, Month, 1))) OVER (PARTITION BY Cust_ID ORDER BY MIN(DATEFROMPARTS(Year, Month, 1))) AS Next_Visit_Date
+        FROM 
+            MonthlyVisitLogs
+        GROUP BY 
+            Cust_ID, Year, Month
+    ) ConsecutiveVisits
+    WHERE 
+        Next_Visit_Date IS NOT NULL
 )
 SELECT 
-    cf.Cust_ID,
+    Cust_ID,
     CASE 
-        WHEN AVG_Time_Gap IS NULL THEN 'No_Data'  -- No average time gap data available
-        WHEN AVG_Time_Gap = 0 THEN 'Regular'     -- Regular customers who purchase every month
-        WHEN AVG_Time_Gap >= 6 THEN 'Churned'    -- Churned customers who haven't made another purchase in the last 6 months
-        ELSE 'Irregular'                         -- Irregular customers who have varying purchase intervals
-    END AS Customer_Label
+        WHEN AVG(Monthly_Time_Gap) <= 1 THEN 'Regular'
+        WHEN AVG(Monthly_Time_Gap) <= 3 THEN 'Irregular'
+        ELSE 'Churn'
+    END AS Customer_Category
 FROM 
-    CustomerFirstPurchase cf
-LEFT JOIN 
-    CustomerTimeGaps ctg ON cf.Cust_ID = ctg.Cust_ID;
+    CustomerTimeGaps
+GROUP BY 
+    Cust_ID;
+
 
 
 /*
@@ -337,46 +435,109 @@ Number of Customers in the Previous Month
 -- 1. Find the number of customers retained month-wise. (You can use time gaps)
 
 
--- CREATE VIEW RetainedCustomers AS
-
+WITH PreviousMonthCustomers AS (
+    SELECT 
+        Cust_ID,
+        Year,
+        Month
+    FROM 
+        MonthlyVisitLogs
+),
+CurrentMonthCustomers AS (
+    SELECT 
+        Cust_ID,
+        Year,
+        Month
+    FROM 
+        MonthlyVisitLogs
+)
 SELECT 
-    CurrentMonth.Cust_ID,
-    CurrentMonth.Year AS Current_Year,
-    CurrentMonth.Month AS Current_Month
+    COUNT(DISTINCT cm.Cust_ID) AS Retained_Customers,
+    cm.Year AS Current_Year,
+    cm.Month AS Current_Month
 FROM 
-    MonthlyVisitLogs AS CurrentMonth
+    CurrentMonthCustomers cm
 JOIN 
-    MonthlyVisitLogs AS PreviousMonth ON CurrentMonth.Cust_ID = PreviousMonth.Cust_ID
-                                      AND (CurrentMonth.Year * 12 + CurrentMonth.Month) 
-                                      = (PreviousMonth.Year * 12 + PreviousMonth.Month + 1);
+    PreviousMonthCustomers pm ON cm.Cust_ID = pm.Cust_ID
+WHERE 
+    DATEADD(MONTH, 1, DATEFROMPARTS(pm.Year, pm.Month, 1)) = DATEFROMPARTS(cm.Year, cm.Month, 1)
+GROUP BY 
+    cm.Year,
+    cm.Month
+ORDER BY
+    Current_Year
+
+
+--
+
+WITH MonthlyVisitLogs AS (
+    SELECT 
+        Cust_ID,
+        YEAR(Order_Date) AS Year,
+        MONTH(Order_Date) AS Month
+    FROM 
+        ECommerce
+),
+Cust_Month AS (
+    SELECT 
+        Cust_ID,   
+        CONCAT(Year, '-', 
+              CASE WHEN LEN(Month) = 1 THEN CONCAT('0', Month) ELSE CAST(Month AS VARCHAR(2)) END
+             ) AS month,
+        DATEDIFF(MONTH, LAG(DATEFROMPARTS(Year, Month, 1)) OVER (PARTITION BY Cust_ID ORDER BY Year, Month), DATEFROMPARTS(Year, Month, 1)) AS TotalMonthDifference
+    FROM 
+        MonthlyVisitLogs
+)
+SELECT  
+    month,
+    COUNT(CASE WHEN TotalMonthDifference = 1 THEN Cust_ID END) AS RetentionCounts
+FROM    
+    Cust_Month
+GROUP BY 
+    month
+ORDER BY 
+    month;
 
 
 
 -- 2. Calculate the month-wise retention rate.
--- Month-Wise Retention Rate = 1.0 * Number of Customers Retained in The Current Month / Total
--- Number of Customers in the Previous Month
+-- Month-Wise Retention Rate = 1.0 * Number of Customers Retained in The Current Month / Total Number of Customers in the Previous Month
 
-SELECT 
-    Current_Year,
-    Current_Month,
-    COUNT(Retained.Cust_ID) AS Retained_Customers,
-    1.0 * COUNT(Retained.Cust_ID) / PreviousMonth.Total_Customers AS Retention_Rate
-FROM 
-    RetainedCustomers AS Retained
-JOIN 
-    (SELECT 
-         Year AS Prev_Year,
-         Month AS Prev_Month,
-         COUNT(DISTINCT Cust_ID) AS Total_Customers
-     FROM 
-         MonthlyVisitLogs
-     GROUP BY 
-         Year, Month) AS PreviousMonth ON Retained.Current_Year = PreviousMonth.Prev_Year
-                                        AND Retained.Current_Month - 1 = PreviousMonth.Prev_Month
+
+WITH MonthlyVisitLogs AS (
+    SELECT 
+        Cust_ID,
+        YEAR(Order_Date) AS Year,
+        MONTH(Order_Date) AS Month
+    FROM 
+        ECommerce
+),
+Cust_Month AS (
+    SELECT 
+        Cust_ID,   
+        CONCAT(Year, '-', 
+              CASE WHEN LEN(Month) = 1 THEN CONCAT('0', Month) ELSE CAST(Month AS VARCHAR(2)) END
+             ) AS month,
+        DATEDIFF(MONTH, LAG(DATEFROMPARTS(Year, Month, 1)) OVER (PARTITION BY Cust_ID ORDER BY Year, Month), DATEFROMPARTS(Year, Month, 1)) AS TotalMonthDifference
+    FROM 
+        MonthlyVisitLogs
+)
+SELECT  
+    month,
+    COUNT(CASE WHEN TotalMonthDifference = 1 THEN Cust_ID END) AS RetainedCustomers,
+    LAG(COUNT(Cust_ID)) OVER (ORDER BY month) AS TotalCustomersPreviousMonth,
+    CASE
+        WHEN LAG(COUNT(Cust_ID)) OVER (ORDER BY month) = 0 THEN 0
+        ELSE 1.0 * COUNT(CASE WHEN TotalMonthDifference = 1 THEN Cust_ID END) / LAG(COUNT(Cust_ID)) OVER (ORDER BY month)
+    END AS RetentionRate
+FROM    
+    Cust_Month
 GROUP BY 
-    Current_Year, Current_Month, PreviousMonth.Total_Customers
+    month
 ORDER BY 
-    Current_Year, Current_Month;
+    month;
+
+
 
 
 
